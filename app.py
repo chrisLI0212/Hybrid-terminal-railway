@@ -1,155 +1,387 @@
-from flask import Flask, request, jsonify
-import requests
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 import os
 from datetime import datetime
 
 app = Flask(__name__)
 
-EODHD_BASE = "https://eodhistoricaldata.com/api/eod/"
-DATABENTO_BASE = "https://hist.databento.com/v0/timeseries.get_range"
-POLYGON_BASE = "https://api.polygon.io/v2/aggs/ticker/"
+# ============================================================================
+# CORS CONFIGURATION - ENABLE FOR S3 FRONTEND ACCESS
+# ============================================================================
+CORS(app, 
+     resources={
+         r"/api/*": {
+             "origins": "*",
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             "supports_credentials": False,
+             "max_age": 3600
+         }
+     },
+     expose_headers=['Content-Type', 'X-Total-Count'])
 
-TICKER_MAP = {
-    'SPX': {'eodhd': 'SPX.INDX', 'databento': 'SPXW', 'polygon': 'I:SPX'},
-    'SPY': {'eodhd': 'SPY.US', 'databento': 'SPY', 'polygon': 'SPY'},
-    'VIX': {'eodhd': '^VIX', 'databento': 'VIX', 'polygon': 'I:VIX'},
-    'AAPL': {'eodhd': 'AAPL.US', 'polygon': 'AAPL'},
-    'TSLA': {'eodhd': 'TSLA.US', 'polygon': 'TSLA'},
-    'AMZN': {'eodhd': 'AMZN.US', 'polygon': 'AMZN'},
+app.config['JSON_SORT_KEYS'] = False
+
+# ============================================================================
+# IN-MEMORY STORAGE
+# ============================================================================
+stored_settings = {
+    "api_base_url": "",
+    "api_keys": {},
+    "tickers": []
 }
+
+stored_data = {
+    "tickers": {},
+    "last_update": None
+}
+
+# ============================================================================
+# CORS PREFLIGHT HANDLER
+# ============================================================================
+
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = jsonify({"success": True})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+        response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
+        return response
+
+# ============================================================================
+# HEALTH CHECK ENDPOINTS
+# ============================================================================
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+    """Health check endpoint"""
+    return jsonify({
+        "success": True,
+        "status": "ok",
+        "message": "Hybrid Terminal Backend is Running",
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.0.0",
+        "backend": "Railway Production"
+    }), 200
 
-@app.route('/api/test/<provider>', methods=['POST'])
-def test_api(provider):
-    try:
-        api_key = request.json.get('apiKey')
-        if not api_key:
-            return jsonify({'success': False, 'error': 'No API key provided'}), 400
-        
-        if provider == 'eodhd':
-            url = f"{EODHD_BASE}SPX?api_token={api_key}&fmt=json&limit=1"
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                return jsonify({'success': True, 'records': 1})
-            return jsonify({'success': False, 'error': f'HTTP {resp.status_code}'})
-        
-        elif provider == 'databento':
-            headers = {'Authorization': f'Bearer {api_key}'}
-            params = {
-                'dataset': 'OPRA',
-                'symbols': 'SPXW',
-                'start': '2025-10-20T00:00Z',
-                'end': '2025-10-21T23:59Z'
-            }
-            resp = requests.get(DATABENTO_BASE, params=params, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json().get('records', [])
-                return jsonify({'success': True, 'records': len(data)})
-            return jsonify({'success': False, 'error': f'HTTP {resp.status_code}'})
-        
-        elif provider == 'polygon':
-            url = f"{POLYGON_BASE}SPX/range/1/day/2025-10-20/2025-10-21"
-            params = {'apiKey': api_key}
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json().get('results', [])
-                return jsonify({'success': True, 'records': len(data)})
-            return jsonify({'success': False, 'error': f'HTTP {resp.status_code}'})
-        
-        return jsonify({'success': False, 'error': 'Unknown provider'}), 400
+@app.route('/api/test', methods=['GET', 'POST', 'OPTIONS'])
+def test():
+    """Test connection endpoint"""
+    if request.method == "OPTIONS":
+        return "", 200
     
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+    return jsonify({
+        "success": True,
+        "message": "Backend Connection Test Successful",
+        "data": "Hybrid Terminal API is Working!",
+        "timestamp": datetime.now().isoformat()
+    }), 200
 
-@app.route('/api/fetch', methods=['POST'])
-def fetch_data():
+# ============================================================================
+# SETTINGS ENDPOINTS
+# ============================================================================
+
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    """Get current settings"""
+    return jsonify({
+        "success": True,
+        "settings": {
+            "api_base_url": stored_settings.get("api_base_url", ""),
+            "api_keys": stored_settings.get("api_keys", {}),
+            "tickers": stored_settings.get("tickers", [])
+        }
+    }), 200
+
+@app.route('/api/settings', methods=['POST'])
+def update_settings():
+    """Update settings"""
     try:
-        data = request.json
-        tickers = data.get('tickers', [])
-        from_date = data.get('from', '')
-        to_date = data.get('to', '')
-        frequency = data.get('frequency', '1d')
-        tier = data.get('tier', 3)
+        data = request.get_json()
         
-        eodhd_key = data.get('eodhd_key', '')
-        databento_key = data.get('databento_key', '')
-        polygon_key = data.get('polygon_key', '')
+        if "api_base_url" in data:
+            stored_settings["api_base_url"] = data["api_base_url"]
         
-        all_data = []
+        if "api_keys" in data:
+            stored_settings["api_keys"] = data["api_keys"]
         
-        for ticker in tickers:
-            mapping = TICKER_MAP.get(ticker, {})
-            
-            # EODHD
-            if mapping.get('eodhd') and eodhd_key:
-                try:
-                    period = 'd' if frequency == '1d' else 'h' if frequency == '1h' else '1m'
-                    url = f"{EODHD_BASE}{mapping['eodhd']}"
-                    params = {
-                        'from': from_date,
-                        'to': to_date,
-                        'period': period,
-                        'api_token': eodhd_key,
-                        'fmt': 'json'
-                    }
-                    resp = requests.get(url, params=params, timeout=15)
-                    if resp.status_code == 200:
-                        records = resp.json()
-                        for r in records:
-                            r['source'] = 'EODHD'
-                            r['ticker'] = ticker
-                        all_data.extend(records)
-                except Exception as e:
-                    print(f"EODHD error: {e}")
-            
-            # Databento
-            if mapping.get('databento') and databento_key:
-                try:
-                    headers = {'Authorization': f'Bearer {databento_key}'}
-                    params = {
-                        'dataset': 'OPRA',
-                        'symbols': mapping['databento'],
-                        'start': f'{from_date}T00:00Z',
-                        'end': f'{to_date}T23:59Z',
-                        'timespan': frequency
-                    }
-                    resp = requests.get(DATABENTO_BASE, params=params, headers=headers, timeout=15)
-                    if resp.status_code == 200:
-                        records = resp.json().get('records', [])
-                        for r in records:
-                            r['source'] = 'Databento'
-                            r['ticker'] = ticker
-                        all_data.extend(records)
-                except Exception as e:
-                    print(f"Databento error: {e}")
-            
-            # Polygon
-            if mapping.get('polygon') and polygon_key:
-                try:
-                    timespan = 'day' if frequency == '1d' else 'hour' if frequency == '1h' else 'minute'
-                    url = f"{POLYGON_BASE}{mapping['polygon']}/range/1/{timespan}/{from_date}/{to_date}"
-                    params = {'apiKey': polygon_key, 'sort': 'asc', 'limit': 50000}
-                    resp = requests.get(url, params=params, timeout=15)
-                    if resp.status_code == 200:
-                        records = resp.json().get('results', [])
-                        for r in records:
-                            r['source'] = 'Polygon'
-                            r['ticker'] = ticker
-                        all_data.extend(records)
-                except Exception as e:
-                    print(f"Polygon error: {e}")
+        if "tickers" in data:
+            stored_settings["tickers"] = data["tickers"]
         
-        return jsonify({'success': True, 'data': all_data, 'count': len(all_data)})
-    
+        return jsonify({
+            "success": True,
+            "message": "Settings updated successfully",
+            "settings": stored_settings
+        }), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+@app.route('/api/settings/save', methods=['POST'])
+def save_settings():
+    """Save settings (alias for update)"""
+    return update_settings()
+
+# ============================================================================
+# API KEY ENDPOINTS
+# ============================================================================
+
+@app.route('/api/keys', methods=['GET'])
+def get_api_keys():
+    """Get stored API keys"""
+    return jsonify({
+        "success": True,
+        "keys": stored_settings.get("api_keys", {})
+    }), 200
+
+@app.route('/api/keys', methods=['POST'])
+def add_api_key():
+    """Add or update API key"""
+    try:
+        data = request.get_json()
+        name = data.get("name")
+        key = data.get("key")
+        
+        if not name or not key:
+            return jsonify({
+                "success": False,
+                "error": "Name and key are required"
+            }), 400
+        
+        if "api_keys" not in stored_settings:
+            stored_settings["api_keys"] = {}
+        
+        stored_settings["api_keys"][name] = key
+        
+        return jsonify({
+            "success": True,
+            "message": f"API key '{name}' saved",
+            "keys": stored_settings["api_keys"]
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+@app.route('/api/keys/<key_name>', methods=['DELETE'])
+def delete_api_key(key_name):
+    """Delete API key"""
+    try:
+        if key_name in stored_settings.get("api_keys", {}):
+            del stored_settings["api_keys"][key_name]
+            return jsonify({
+                "success": True,
+                "message": f"API key '{key_name}' deleted"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"API key '{key_name}' not found"
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+# ============================================================================
+# TICKER ENDPOINTS
+# ============================================================================
+
+@app.route('/api/tickers', methods=['GET'])
+def get_tickers():
+    """Get all tickers"""
+    return jsonify({
+        "success": True,
+        "tickers": stored_settings.get("tickers", []),
+        "count": len(stored_settings.get("tickers", []))
+    }), 200
+
+@app.route('/api/tickers', methods=['POST'])
+def add_ticker():
+    """Add ticker"""
+    try:
+        data = request.get_json()
+        ticker = data.get("ticker", "").upper()
+        
+        if not ticker:
+            return jsonify({
+                "success": False,
+                "error": "Ticker symbol is required"
+            }), 400
+        
+        if "tickers" not in stored_settings:
+            stored_settings["tickers"] = []
+        
+        if ticker not in stored_settings["tickers"]:
+            stored_settings["tickers"].append(ticker)
+            return jsonify({
+                "success": True,
+                "message": f"Ticker '{ticker}' added",
+                "tickers": stored_settings["tickers"]
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Ticker '{ticker}' already exists"
+            }), 400
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+@app.route('/api/tickers/<ticker>', methods=['DELETE'])
+def delete_ticker(ticker):
+    """Delete ticker"""
+    try:
+        ticker = ticker.upper()
+        if ticker in stored_settings.get("tickers", []):
+            stored_settings["tickers"].remove(ticker)
+            return jsonify({
+                "success": True,
+                "message": f"Ticker '{ticker}' deleted"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Ticker '{ticker}' not found"
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+# ============================================================================
+# DATA ENDPOINTS
+# ============================================================================
+
+@app.route('/api/data', methods=['GET'])
+def get_data():
+    """Get stored data"""
+    return jsonify({
+        "success": True,
+        "data": stored_data,
+        "last_update": stored_data.get("last_update")
+    }), 200
+
+@app.route('/api/data/<ticker>', methods=['GET'])
+def get_ticker_data(ticker):
+    """Get data for specific ticker"""
+    ticker = ticker.upper()
+    if ticker in stored_data.get("tickers", {}):
+        return jsonify({
+            "success": True,
+            "ticker": ticker,
+            "data": stored_data["tickers"][ticker]
+        }), 200
+    else:
+        return jsonify({
+            "success": False,
+            "error": f"No data for ticker '{ticker}'"
+        }), 404
+
+@app.route('/api/data', methods=['POST'])
+def store_data():
+    """Store data"""
+    try:
+        data = request.get_json()
+        
+        if "tickers" in data:
+            stored_data["tickers"] = data["tickers"]
+        
+        stored_data["last_update"] = datetime.now().isoformat()
+        
+        return jsonify({
+            "success": True,
+            "message": "Data stored successfully",
+            "last_update": stored_data["last_update"]
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+# ============================================================================
+# EXPORT ENDPOINTS
+# ============================================================================
+
+@app.route('/api/export/csv', methods=['GET'])
+def export_csv():
+    """Export data as CSV format"""
+    try:
+        csv_data = "Ticker,Value,Timestamp\n"
+        
+        for ticker, data in stored_data.get("tickers", {}).items():
+            csv_data += f"{ticker},{data.get('value', 'N/A')},{stored_data.get('last_update', 'N/A')}\n"
+        
+        return jsonify({
+            "success": True,
+            "format": "csv",
+            "data": csv_data
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+@app.route('/api/export/json', methods=['GET'])
+def export_json():
+    """Export data as JSON"""
+    return jsonify({
+        "success": True,
+        "format": "json",
+        "data": stored_data
+    }), 200
+
+# ============================================================================
+# STATUS ENDPOINTS
+# ============================================================================
+
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    """Get overall system status"""
+    return jsonify({
+        "success": True,
+        "status": "running",
+        "timestamp": datetime.now().isoformat(),
+        "metrics": {
+            "tickers_count": len(stored_settings.get("tickers", [])),
+            "api_keys_count": len(stored_settings.get("api_keys", {})),
+            "data_entries": len(stored_data.get("tickers", {})),
+            "last_data_update": stored_data.get("last_update")
+        }
+    }), 200
+
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Endpoint not found'}), 404
+    return jsonify({
+        "success": False,
+        "error": "Endpoint not found",
+        "path": request.path
+    }), 404
+
+@app.errorhandler(500)
+def server_error(error):
+    return jsonify({
+        "success": False,
+        "error": "Internal server error"
+    }), 500
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
