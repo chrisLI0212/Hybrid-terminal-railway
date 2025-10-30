@@ -1,168 +1,156 @@
+from flask import Flask, request, jsonify
+import requests
+import os
+from datetime import datetime
 
-summary = """
-╔══════════════════════════════════════════════════════════════════════════════╗
-║         ⚡ HYBRID TERMINAL COMPLETE - READY FOR RAILWAY DEPLOYMENT ⚡       ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+app = Flask(__name__)
 
-🎉 YOU NOW HAVE EVERYTHING NEEDED!
+EODHD_BASE = "https://eodhistoricaldata.com/api/eod/"
+DATABENTO_BASE = "https://hist.databento.com/v0/timeseries.get_range"
+POLYGON_BASE = "https://api.polygon.io/v2/aggs/ticker/"
 
-═══════════════════════════════════════════════════════════════════════════════
+TICKER_MAP = {
+    'SPX': {'eodhd': 'SPX.INDX', 'databento': 'SPXW', 'polygon': 'I:SPX'},
+    'SPY': {'eodhd': 'SPY.US', 'databento': 'SPY', 'polygon': 'SPY'},
+    'VIX': {'eodhd': '^VIX', 'databento': 'VIX', 'polygon': 'I:VIX'},
+    'AAPL': {'eodhd': 'AAPL.US', 'polygon': 'AAPL'},
+    'TSLA': {'eodhd': 'TSLA.US', 'polygon': 'TSLA'},
+    'AMZN': {'eodhd': 'AMZN.US', 'polygon': 'AMZN'},
+}
 
-📦 COMPLETE FILE LIST:
+@app.route('/api/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
 
-ANDROID APP (Frontend):
-  [231] hybrid-app-complete-single-file.html
-        → Single file PWA - works immediately
-        → All features: Period, Tickers, API, Fetch, Export, Settings
-        → Autocomplete, ticker mapping, real data
-        → Mobile-optimized (Bootstrap responsive)
+@app.route('/api/test/<provider>', methods=['POST'])
+def test_api(provider):
+    try:
+        api_key = request.json.get('apiKey')
+        if not api_key:
+            return jsonify({'success': False, 'error': 'No API key provided'}), 400
         
-BACKEND SERVERS (Choose One):
-
-  Option A - PYTHON (RECOMMENDED):
-    [234] app-py-for-railway.py        → Main backend (rename to app.py)
-    [235] requirements-txt.txt         → Dependencies (rename to requirements.txt)
-    [236] Procfile.txt                 → Railway config (rename to Procfile)
+        if provider == 'eodhd':
+            url = f"{EODHD_BASE}SPX?api_token={api_key}&fmt=json&limit=1"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                return jsonify({'success': True, 'records': 1})
+            return jsonify({'success': False, 'error': f'HTTP {resp.status_code}'})
+        
+        elif provider == 'databento':
+            headers = {'Authorization': f'Bearer {api_key}'}
+            params = {
+                'dataset': 'OPRA',
+                'symbols': 'SPXW',
+                'start': '2025-10-20T00:00Z',
+                'end': '2025-10-21T23:59Z'
+            }
+            resp = requests.get(DATABENTO_BASE, params=params, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json().get('records', [])
+                return jsonify({'success': True, 'records': len(data)})
+            return jsonify({'success': False, 'error': f'HTTP {resp.status_code}'})
+        
+        elif provider == 'polygon':
+            url = f"{POLYGON_BASE}SPX/range/1/day/2025-10-20/2025-10-21"
+            params = {'apiKey': api_key}
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json().get('results', [])
+                return jsonify({'success': True, 'records': len(data)})
+            return jsonify({'success': False, 'error': f'HTTP {resp.status_code}'})
+        
+        return jsonify({'success': False, 'error': 'Unknown provider'}), 400
     
-  Option B - NODE.JS (Alternative):
-    [232] server-hybrid-complete.js    → Complete backend
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/fetch', methods=['POST'])
+def fetch_data():
+    try:
+        data = request.json
+        tickers = data.get('tickers', [])
+        from_date = data.get('from', '')
+        to_date = data.get('to', '')
+        frequency = data.get('frequency', '1d')
+        tier = data.get('tier', 3)
+        
+        eodhd_key = data.get('eodhd_key', '')
+        databento_key = data.get('databento_key', '')
+        polygon_key = data.get('polygon_key', '')
+        
+        all_data = []
+        
+        for ticker in tickers:
+            mapping = TICKER_MAP.get(ticker, {})
+            
+            # EODHD
+            if mapping.get('eodhd') and eodhd_key:
+                try:
+                    period = 'd' if frequency == '1d' else 'h' if frequency == '1h' else '1m'
+                    url = f"{EODHD_BASE}{mapping['eodhd']}"
+                    params = {
+                        'from': from_date,
+                        'to': to_date,
+                        'period': period,
+                        'api_token': eodhd_key,
+                        'fmt': 'json'
+                    }
+                    resp = requests.get(url, params=params, timeout=15)
+                    if resp.status_code == 200:
+                        records = resp.json()
+                        for r in records:
+                            r['source'] = 'EODHD'
+                            r['ticker'] = ticker
+                        all_data.extend(records)
+                except Exception as e:
+                    print(f"EODHD error: {e}")
+            
+            # Databento
+            if mapping.get('databento') and databento_key:
+                try:
+                    headers = {'Authorization': f'Bearer {databento_key}'}
+                    params = {
+                        'dataset': 'OPRA',
+                        'symbols': mapping['databento'],
+                        'start': f'{from_date}T00:00Z',
+                        'end': f'{to_date}T23:59Z',
+                        'timespan': frequency
+                    }
+                    resp = requests.get(DATABENTO_BASE, params=params, headers=headers, timeout=15)
+                    if resp.status_code == 200:
+                        records = resp.json().get('records', [])
+                        for r in records:
+                            r['source'] = 'Databento'
+                            r['ticker'] = ticker
+                        all_data.extend(records)
+                except Exception as e:
+                    print(f"Databento error: {e}")
+            
+            # Polygon
+            if mapping.get('polygon') and polygon_key:
+                try:
+                    timespan = 'day' if frequency == '1d' else 'hour' if frequency == '1h' else 'minute'
+                    url = f"{POLYGON_BASE}{mapping['polygon']}/range/1/{timespan}/{from_date}/{to_date}"
+                    params = {'apiKey': polygon_key, 'sort': 'asc', 'limit': 50000}
+                    resp = requests.get(url, params=params, timeout=15)
+                    if resp.status_code == 200:
+                        records = resp.json().get('results', [])
+                        for r in records:
+                            r['source'] = 'Polygon'
+                            r['ticker'] = ticker
+                        all_data.extend(records)
+                except Exception as e:
+                    print(f"Polygon error: {e}")
+        
+        return jsonify({'success': True, 'data': all_data, 'count': len(all_data)})
     
-DOCUMENTATION:
-  [233] RAILWAY-DEPLOY-GUIDE.md       → Detailed step-by-step (30 minutes)
-  [237] QUICK-START-RAILWAY.md        → Fast version (15 minutes) ⭐ START HERE
-  [230] REQUIREMENTS-SUMMARY.md       → All features explained
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
-═══════════════════════════════════════════════════════════════════════════════
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Endpoint not found'}), 404
 
-🚀 DEPLOYMENT FLOW:
-
-  YOUR COMPUTER                 INTERNET                 ANDROID PHONE
-  ┌─────────────────┐          ┌─────────┐             ┌───────────────┐
-  │  3 files        │    →     │ Railway │    ←        │  Chrome App   │
-  │ (app.py etc)    │  GitHub  │ Server  │  HTTPS     │   (PWA)       │
-  │                 │          │ ($5/mo) │             │               │
-  └─────────────────┘          └─────────┘             └───────────────┘
-      
-      Upload once       Runs 24/7         Works anywhere
-      Never touch again   No desktop       On WiFi or 4G
-
-═══════════════════════════════════════════════════════════════════════════════
-
-⚡ QUICKEST PATH TO WORKING APP (15 MINUTES):
-
-  1️⃣ Create folder: hybrid-terminal-railway
-  
-  2️⃣ Download 3 files [234], [235], [236]
-     - Rename [234] to: app.py
-     - Rename [235] to: requirements.txt
-     - Rename [236] to: Procfile (no .txt extension!)
-  
-  3️⃣ Git commands:
-     git init
-     git add .
-     git commit -m "Initial commit"
-     git branch -M main
-  
-  4️⃣ Create GitHub repo at: https://github.com/new
-     Name: hybrid-terminal-railway
-     (leave empty, don't add README)
-  
-  5️⃣ Connect to GitHub:
-     git remote add origin https://github.com/YOUR_USERNAME/hybrid-terminal-railway.git
-     git push -u origin main
-  
-  6️⃣ Deploy to Railway:
-     - Go to https://railway.app
-     - Click "New Project"
-     - "Deploy from GitHub"
-     - Select hybrid-terminal-railway
-     - WAIT 3-5 MINUTES
-  
-  7️⃣ Get your URL:
-     - Railway dashboard → Settings
-     - Copy "Service URL" (e.g., https://hybrid-terminal-railway.up.railway.app)
-  
-  8️⃣ Test on Android:
-     - Open [231] app in Chrome
-     - Go to SETTINGS tab
-     - Paste: https://hybrid-terminal-railway.up.railway.app/api
-     - Click "TEST CONNECTION"
-     - See ✓ Backend Connected
-  
-  9️⃣ DONE! Now use the app:
-     - Select dates
-     - Add tickers (SPX, SPY, AAPL, etc)
-     - Enter API keys
-     - Click FETCH
-     - Export CSV/JSON
-
-═══════════════════════════════════════════════════════════════════════════════
-
-✅ FEATURES WORKING:
-
-  ✓ Real data from EODHD, Databento, Polygon
-  ✓ Ticker autocomplete (type letter)
-  ✓ Ticker mapping (SPX→SPX.INDX for EODHD, etc)
-  ✓ 3 data tiers (18, 55, 136 columns)
-  ✓ Min/Hour/Daily frequency
-  ✓ CSV & JSON export
-  ✓ Settings tab (API config)
-  ✓ Connection status indicator
-  ✓ Merged or separate data exports
-  ✓ Professional UI (your original design)
-  ✓ Works on Android as PWA app
-  ✓ Secure HTTPS connection
-  ✓ Runs 24/7 even when computer is OFF
-
-═══════════════════════════════════════════════════════════════════════════════
-
-💰 COSTS:
-
-  Initial Setup:
-    GitHub: FREE
-    Railway: FREE (sign up)
-    
-  Monthly:
-    Railway Backend: $5/month
-    Your API subscriptions: $347/month (existing)
-    TOTAL: $352/month (+$5)
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🎯 NEXT STEPS:
-
-  Immediate (Today):
-    1. Download [237] QUICK-START-RAILWAY.md
-    2. Follow the 9 steps
-    3. Deploy to Railway (15 minutes)
-    4. Test on Android
-    
-  Soon (Next Week):
-    1. Deploy Hybrid trading model on same Railway
-    2. Add prediction endpoint
-    3. Get real-time signals on Android
-    
-  Cost then: ~$20-30/month for EVERYTHING
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🎉 YOU'VE SUCCESSFULLY BUILT:
-
-  ✅ Professional Android PWA app
-  ✅ Real backend API server
-  ✅ Smart ticker mapping (SPX/SPY/etc)
-  ✅ Multi-API integration
-  ✅ Data tiering system
-  ✅ Cloud deployment ready
-  ✅ 24/7 production system
-  
-  All for: $5/month! 💎🚀
-
-═══════════════════════════════════════════════════════════════════════════════
-
-START NOW: Read [237] QUICK-START-RAILWAY.md and follow 9 steps!
-
-═══════════════════════════════════════════════════════════════════════════════
-"""
-
-print(summary)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
