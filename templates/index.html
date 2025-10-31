@@ -89,15 +89,15 @@
             
             <div class="form-group">
                 <label><i class="fas fa-key"></i> EODHD API Key</label>
-                <input type="text" id="eodhd_key" placeholder="Enter EODHD key">
+                <input type="text" id="eodhd_key" placeholder="68ecd5da88a167.62554029">
             </div>
             <div class="form-group">
                 <label><i class="fas fa-key"></i> Databento API Key</label>
-                <input type="text" id="databento_key" placeholder="Enter Databento key (optional)">
+                <input type="text" id="databento_key" placeholder="db-hwAEG7PSwisD6WEaq96YpgCY5Py3b">
             </div>
             <div class="form-group">
-                <label><i class="fas fa-key"></i> Polygon API Key</label>
-                <input type="text" id="polygon_key" placeholder="Enter Polygon key (optional)">
+                <label><i class="fas fa-key"></i> massive API Key</label>
+                <input type="text" id="massive_key" placeholder="NqVn7ACiYmIN7wIUNQa4TApuXgiS4O6v">
             </div>
             <div class="form-group">
                 <label><i class="fas fa-key"></i> Theta Data API Key</label>
@@ -116,7 +116,7 @@
             <button class="tab-btn active" onclick="switchTab('eodhd-historical')"><i class="fas fa-chart-line"></i> EODHD Historical</button>
             <button class="tab-btn" onclick="switchTab('eodhd-options')"><i class="fas fa-list"></i> EODHD Options</button>
             <button class="tab-btn" onclick="switchTab('databento')"><i class="fas fa-database"></i> Databento</button>
-            <button class="tab-btn" onclick="switchTab('polygon')"><i class="fas fa-chart-bar"></i> Polygon</button>
+            <button class="tab-btn" onclick="switchTab('massive')"><i class="fas fa-chart-bar"></i> massive</button>
             <button class="tab-btn" onclick="switchTab('theta')"><i class="fas fa-layer-group"></i> Theta Data</button>
         </div>
         
@@ -160,17 +160,17 @@
             <div id="databento-results" class="results hidden"></div>
         </div>
         
-        <div id="polygon" class="tab-content">
-            <h2><i class="fas fa-chart-bar"></i> Polygon Data</h2>
+        <div id="massive" class="tab-content">
+            <h2><i class="fas fa-chart-bar"></i> massive Data</h2>
             <div class="form-grid">
-                <div class="form-group"><label>Select Ticker</label><select id="polygon_ticker"><option>Loading...</option></select></div>
-                <div class="form-group"><label>Timespan</label><select id="polygon_timespan"><option value="minute">Minute</option><option value="hour" selected>Hour</option><option value="day">Day</option></select></div>
-                <div class="form-group"><label>Start Date</label><input type="date" id="polygon_start"></div>
-                <div class="form-group"><label>End Date</label><input type="date" id="polygon_end"></div>
+                <div class="form-group"><label>Select Ticker</label><select id="massive_ticker"><option>Loading...</option></select></div>
+                <div class="form-group"><label>Timespan</label><select id="massive_timespan"><option value="minute">Minute</option><option value="hour" selected>Hour</option><option value="day">Day</option></select></div>
+                <div class="form-group"><label>Start Date</label><input type="date" id="massive_start"></div>
+                <div class="form-group"><label>End Date</label><input type="date" id="massive_end"></div>
             </div>
-            <button class="fetch-btn" onclick="fetchPolygon()"><i class="fas fa-download"></i> Fetch Data</button>
-            <div id="polygon-loading" class="loading"><div class="spinner"></div><p>Fetching...</p></div>
-            <div id="polygon-results" class="results hidden"></div>
+            <button class="fetch-btn" onclick="fetchmassive()"><i class="fas fa-download"></i> Fetch Data</button>
+            <div id="massive-loading" class="loading"><div class="spinner"></div><p>Fetching...</p></div>
+            <div id="massive-results" class="results hidden"></div>
         </div>
         
         <div id="theta" class="tab-content">
@@ -203,7 +203,7 @@
             const backendUrl = localStorage.getItem('backendUrl');
             const eodhd = localStorage.getItem('eodhd_key');
             const databento = localStorage.getItem('databento_key');
-            const polygon = localStorage.getItem('polygon_key');
+            const massive = localStorage.getItem('massive_key');
             const theta = localStorage.getItem('theta_key');
             
             if(backendUrl) {
@@ -212,14 +212,14 @@
             }
             if(eodhd) document.getElementById('eodhd_key').value = eodhd;
             if(databento) document.getElementById('databento_key').value = databento;
-            if(polygon) document.getElementById('polygon_key').value = polygon;
+            if(massive) document.getElementById('massive_key').value = massive;
             if(theta) document.getElementById('theta_key').value = theta;
         }
         
         function setDefaultDates(){
             const e=new Date,t=new Date(e.getTime()-2592e6),a=d=>d.toISOString().split('T')[0];
-            ['eodhd_hist_start','databento_start','polygon_start','theta_start'].forEach(e=>{document.getElementById(e).value=a(t)});
-            ['eodhd_hist_end','databento_end','polygon_end','eodhd_opt_date','theta_end'].forEach(e=>{document.getElementById(e).value=a(new Date)})
+            ['eodhd_hist_start','databento_start','massive_start','theta_start'].forEach(e=>{document.getElementById(e).value=a(t)});
+            ['eodhd_hist_end','databento_end','massive_end','eodhd_opt_date','theta_end'].forEach(e=>{document.getElementById(e).value=a(new Date)})
         }
         
         async function loadTickers(){
@@ -227,7 +227,7 @@
                 const e=await fetch(API_BASE+'/api/config/tickers'),t=await e.json();
                 if(!t.success)throw new Error(t.error);
                 [...t.primary_tickers,...t.mag7_tickers].forEach(t=>{
-                    ['eodhd_hist_ticker','databento_ticker','polygon_ticker','theta_ticker'].forEach(e=>{
+                    ['eodhd_hist_ticker','databento_ticker','massive_ticker','theta_ticker'].forEach(e=>{
                         document.getElementById(e).innerHTML+='<option value="'+t.id+'">'+t.label+'</option>'
                     })
                 })
@@ -272,13 +272,13 @@
             
             localStorage.setItem('eodhd_key', document.getElementById('eodhd_key').value);
             localStorage.setItem('databento_key', document.getElementById('databento_key').value);
-            localStorage.setItem('polygon_key', document.getElementById('polygon_key').value);
+            localStorage.setItem('massive_key', document.getElementById('massive_key').value);
             localStorage.setItem('theta_key', document.getElementById('theta_key').value);
             
             const e=[
                 {name:'eodhd',value:document.getElementById('eodhd_key').value},
                 {name:'databento',value:document.getElementById('databento_key').value},
-                {name:'polygon',value:document.getElementById('polygon_key').value},
+                {name:'massive',value:document.getElementById('massive_key').value},
                 {name:'theta',value:document.getElementById('theta_key').value}
             ];
             
@@ -299,7 +299,7 @@
                 document.getElementById('backendUrl').value = '';
                 document.getElementById('eodhd_key').value = '';
                 document.getElementById('databento_key').value = '';
-                document.getElementById('polygon_key').value = '';
+                document.getElementById('massive_key').value = '';
                 document.getElementById('theta_key').value = '';
                 showStatus('settingsStatus','✓ All data cleared!','success');
             }
@@ -333,10 +333,10 @@
             await fetchData('databento',API_BASE+'/api/data/databento/historical',{ticker:e,dataset:document.getElementById('databento_dataset').value,schema:document.getElementById('databento_schema').value,start:document.getElementById('databento_start').value,end:document.getElementById('databento_end').value})
         }
         
-        async function fetchPolygon(){
-            const e=document.getElementById('polygon_ticker').value;
+        async function fetchmassive(){
+            const e=document.getElementById('massive_ticker').value;
             if(!e)return void alert('Select ticker');
-            await fetchData('polygon',API_BASE+'/api/data/polygon/historical',{ticker:e,timespan:document.getElementById('polygon_timespan').value,start:document.getElementById('polygon_start').value,end:document.getElementById('polygon_end').value})
+            await fetchData('massive',API_BASE+'/api/data/massive/historical',{ticker:e,timespan:document.getElementById('massive_timespan').value,start:document.getElementById('massive_start').value,end:document.getElementById('massive_end').value})
         }
         
         async function fetchTheta(){
