@@ -1,0 +1,18 @@
+{
+  "primary_tickers": [
+    {"id": "SPX", "label": "SPX - S&P 500 Index"},
+    {"id": "SPY", "label": "SPY - SPDR S&P 500 ETF"},
+    {"id": "QQQ", "label": "QQQ - Nasdaq-100"},
+    {"id": "VIX", "label": "VIX - Volatility Index"},
+    {"id": "TLT", "label": "TLT - Treasury ETF"}
+  ],
+  "mag7": [
+    {"id": "NVDA", "label": "NVDA - NVIDIA"},
+    {"id": "MSFT", "label": "MSFT - Microsoft"},
+    {"id": "GOOGL", "label": "GOOGL - Google"},
+    {"id": "AMZN", "label": "AMZN - Amazon"},
+    {"id": "TSLA", "label": "TSLA - Tesla"},
+    {"id": "META", "label": "META - Meta"},
+    {"id": "NFLX", "label": "NFLX - Netflix"}
+  ]
+}
