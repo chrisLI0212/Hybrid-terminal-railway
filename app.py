@@ -11,7 +11,7 @@ app = Flask(__name__)
 API_KEYS = {
     'eodhd': os.getenv('EODHD_API_KEY', ''),
     'databento': os.getenv('DATABENTO_API_KEY', ''),
-    'polygon': os.getenv('POLYGON_API_KEY', ''),
+    'massive': os.getenv('massive_API_KEY', ''),
     'theta': os.getenv('THETA_API_KEY', '')
 }
 
@@ -26,7 +26,7 @@ def map_ticker(provider, ticker):
             'VIX': 'VIX.INDX',
             'TLT': 'TLT.US'
         },
-        'polygon': {
+        'massive': {
             'SPX': 'I:SPX',
             'SPY': 'SPY',
             'QQQ': 'QQQ',
@@ -54,7 +54,7 @@ def map_ticker(provider, ticker):
 @app.route('/api/set_keys', methods=['POST'])
 def set_keys():
     data = request.json
-    for k in ['eodhd', 'databento', 'polygon', 'theta']:
+    for k in ['eodhd', 'databento', 'massive', 'theta']:
         if k in data:
             os.environ[k.upper()+'_API_KEY'] = data[k]
             API_KEYS[k] = data[k]
